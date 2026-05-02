@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>NAVY WARFARE - ULTRA REALISTIC</title>
+    <style>
+        body { margin: 0; background: #000; color: #0f0; font-family: 'Courier New', monospace; overflow: hidden; }
+        #overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; background: rgba(0,0,0,0.8); padding: 20px; border: 2px solid #0f0; }
+        #ui { position: absolute; bottom: 20px; left: 20px; pointer-events: none; }
+        canvas { display: block; }
+        #crosshair { position: absolute; top: 50%; left: 50%; width: 10px; height: 10px; border: 1px solid #0f0; transform: translate(-50%, -50%); }
+    </style>
+</head>
+<body>
+
+<div id="overlay">
+    <h1>NAVY CARRIER OPS</h1>
+    <p>SELECT DIFFICULTY: <select id="diff"><option>Recruit</option><option>Hardcore</option></select></p>
+    <button id="startBtn" style="padding: 10px 20px; cursor: pointer;">DEPLOY TO CARRIER</button>
+</div>
+
+<div id="ui">
+    <div id="alt">ALTITUDE: 0</div>
+    <div id="speed">SPEED: 0 knots</div>
+    <div id="status">WEAPONS READY</div>
+</div>
+<div id="crosshair"></div>
+
+<script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+</script>
+
+<script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+    import { Water } from 'three/addons/objects/Water.js';
+    import { Sky } from 'three/addons/objects/Sky.js';
+
+    let scene, camera, renderer, controls, water, socket;
+    let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+    let isFlying = false, velocity = new THREE.Vector3();
+    const loader = new GLTFLoader();
+    const clock = new THREE.Clock();
+
+    const models = {
+        carrier: 'https://vazxmixjsiawhamofees.supabase.co/storage/v1/object/public/models/ship-large/model.gltf',
+        jet: 'https://vazxmixjsiawhamofees.supabase.co/storage/v1/object/public/models/low-poly-spaceship/model.gltf',
+        boat: 'https://vazxmixjsiawhamofees.supabase.co/storage/v1/object/public/models/water-craft/model.gltf'
+    };
+
+    init();
+
+    function init() {
+        scene = new THREE.Scene();
+        camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 10000);
+        
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        document.body.appendChild(renderer.domElement);
+
+        controls = new PointerLockControls(camera, document.body);
+        document.getElementById('startBtn').addEventListener('click', () => {
+            controls.lock();
+            document.getElementById('overlay').style.display = 'none';
+            initAudio();
+        });
+
+        // 1. ULTRA REALISTIC WATER
+        const waterGeometry = new THREE.PlaneGeometry(10000, 10000);
+        water = new Water(waterGeometry, {
+            textureWidth: 512, textureHeight: 512,
+            waterNormals: new THREE.TextureLoader().load('https://threejs.org/examples/textures/waternormals.jpg', function(t) { t.wrapS = t.wrapT = THREE.RepeatWrapping; }),
+            sunDirection: new THREE.Vector3(), sunColor: 0xffffff, waterColor: 0x001e0f, distortionScale: 3.7,
+        });
+        water.rotation.x = -Math.PI / 2;
+        scene.add(water);
+
+        // 2. SKYBOX
+        const sky = new Sky();
+        sky.scale.setScalar(10000);
+        scene.add(sky);
+
+        // 3. LOAD ASSETS
+        loader.load(models.carrier, (gltf) => {
+            const ship = gltf.scene;
+            ship.scale.set(20, 20, 20);
+            ship.position.y = -2;
+            scene.add(ship);
+        });
+
+        // Setup Light
+        const light = new THREE.DirectionalLight(0xffffff, 2);
+        light.position.set(100, 100, 100);
+        scene.add(light);
+
+        window.addEventListener('keydown', onKeyDown);
+        window.addEventListener('keyup', onKeyUp);
+        window.addEventListener('mousedown', fireMissile);
+
+        connectServer();
+        animate();
+    }
+
+    function initAudio() {
+        const listener = new THREE.AudioListener();
+        camera.add(listener);
+        // Add realistic ocean/engine sounds here
+    }
+
+    function fireMissile() {
+        const sphere = new THREE.Mesh(new THREE.SphereGeometry(0.2), new THREE.MeshBasicMaterial({color: 0xff0000}));
+        sphere.position.copy(camera.position);
+        scene.add(sphere);
+        // Simple forward projectile logic
+        const dir = new THREE.Vector3();
+        camera.getWorldDirection(dir);
+        sphere.userData.velocity = dir.multiplyScalar(2);
+    }
+
+    function connectServer() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
+        socket.onmessage = (e) => {
+            const players = JSON.parse(e.data);
+            // logic to render other players/bots
+        };
+    }
+
+    function onKeyDown(e) {
+        switch(e.code) {
+            case 'KeyW': moveForward = true; break;
+            case 'KeyS': moveBackward = true; break;
+            case 'KeyA': moveLeft = true; break;
+            case 'KeyD': moveRight = true; break;
+            case 'ShiftLeft': isFlying = !isFlying; break; // Toggle plane mode
+            case 'Space': if(!isFlying) velocity.y += 5; break; // Jump/Parachute
+        }
+    }
+
+    function onKeyUp(e) {
+        switch(e.code) {
+            case 'KeyW': moveForward = false; break;
+            case 'KeyS': moveBackward = false; break;
+            case 'KeyA': moveLeft = false; break;
+            case 'KeyD': moveRight = false; break;
+        }
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        const delta = clock.getDelta();
+
+        if (controls.isLocked) {
+            const speed = isFlying ? 150 : 20;
+            if (moveForward) controls.moveForward(speed * delta);
+            if (moveBackward) controls.moveForward(-speed * delta);
+            if (moveLeft) controls.moveRight(-speed * delta);
+            if (moveRight) controls.moveRight(speed * delta);
+
+            // Gravity/Parachute logic
+            if (camera.position.y > 2 && !isFlying) {
+                camera.position.y -= 9.8 * 0.1 * delta; // Fall speed
+            }
+        }
+
+        water.material.uniforms[ 'time' ].value += 1.0 / 60.0;
+        
+        // Sync to server
+        if(socket && socket.readyState === 1) {
+            socket.send(JSON.stringify({
+                x: camera.position.x, y: camera.position.y, z: camera.position.z,
+                rx: camera.rotation.x, ry: camera.rotation.y, rz: camera.rotation.z,
+                type: isFlying ? "plane" : "player"
+            }));
+        }
+
+        renderer.render(scene, camera);
+    }
+</script>
+</body>
+</html>
