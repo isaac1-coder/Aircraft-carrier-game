@@ -2,30 +2,33 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>NAVY WARFARE: GLB EDITION</title>
+    <title>NAVY WARFARE: ELITE</title>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; font-family: 'Arial Black', sans-serif; }
-        #loading { position: absolute; width: 100%; height: 100%; background: #000; color: #f00; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 1000; }
-        #ui { position: absolute; bottom: 40px; left: 40px; color: #fff; z-index: 10; pointer-events: none; text-shadow: 2px 2px #000; }
-        #radar { position: absolute; top: 20px; right: 20px; width: 180px; height: 180px; border: 2px solid #555; background: rgba(0,20,0,0.7); border-radius: 50%; }
-        #crosshair { position: absolute; top: 50%; left: 50%; width: 30px; height: 30px; border: 2px solid rgba(255,255,255,0.5); transform: translate(-50%, -50%); border-radius: 50%; }
-        button { padding: 20px 50px; background: #f00; color: #fff; border: none; cursor: pointer; font-size: 20px; }
+        body { margin: 0; background: #000; color: #fff; font-family: 'Arial Black', sans-serif; overflow: hidden; }
+        #menu { position: absolute; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 100; text-align: center; }
+        #ui { position: absolute; bottom: 20px; left: 20px; z-index: 10; pointer-events: none; color: #0f0; }
+        #minimap { position: absolute; top: 20px; right: 20px; width: 200px; height: 200px; border: 2px solid #555; background: rgba(0,20,0,0.8); border-radius: 50%; }
+        #crosshair { position: absolute; top: 50%; left: 50%; width: 20px; height: 20px; border: 2px solid #fff; transform: translate(-50%, -50%); border-radius: 50%; display: none; }
+        .btn { background: #d00; border: none; color: #fff; padding: 15px 30px; cursor: pointer; margin: 10px; font-size: 18px; }
+        .btn:hover { background: #f00; }
     </style>
 </head>
 <body>
 
-<div id="loading">
-    <h1>INITIALIZING NAVY ASSETS...</h1>
-    <p id="loadStatus">Downloading 3D Models (Carrier/Jets)...</p>
-    <button id="startBtn" style="display:none;">DEPLOY NOW</button>
+<div id="menu">
+    <h1 style="font-size: 4em; color: #fff; margin: 0;">NAVY OPS</h1>
+    <p>SELECT BOT DIFFICULTY</p>
+    <div>
+        <button class="btn" onclick="startGame('Recruit')">RECRUIT</button>
+        <button class="btn" onclick="startGame('Veteran')">VETERAN (EXTREME)</button>
+    </div>
 </div>
 
-<canvas id="radar"></canvas>
+<canvas id="minimap"></canvas>
 <div id="crosshair"></div>
 <div id="ui">
-    <div id="vehicle">STATUS: INFANTRY</div>
-    <div id="weapon">WEAPON: M4A1 CARBINE</div>
-    <div id="coords">COORDS: 0, 0, 0</div>
+    <div id="mode">INFANTRY</div>
+    <div id="target">MISSION: LOCATE CARRIER TOWER</div>
 </div>
 
 <script type="importmap">
@@ -44,53 +47,51 @@
     import { Water } from 'three/addons/objects/Water.js';
     import { Sky } from 'three/addons/objects/Sky.js';
 
-    let scene, camera, renderer, controls, water, socket;
+    let scene, camera, renderer, controls, water, jet, gun, boat, socket;
     let moveF = false, moveB = false, moveL = false, moveR = false;
-    let mode = "walking"; // walking, jet, boat
-    let playerModel, jetModel, weaponModel;
+    let currentMode = "walking";
     const loader = new GLTFLoader();
     const clock = new THREE.Clock();
 
-    // High Quality Model Links
-    const ASSETS = {
-        carrier: 'https://vazxmixjsiawhamofees.supabase.co/storage/v1/object/public/models/ship-large/model.gltf',
-        jet: 'https://vazxmixjsiawhamofees.supabase.co/storage/v1/object/public/models/low-poly-spaceship/model.gltf',
-        gun: 'https://vazxmixjsiawhamofees.supabase.co/storage/v1/object/public/models/blaster/model.gltf'
+    // STABLE MODELS (From Three.js Official Repo)
+    const MODELS = {
+        jet: 'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/models/gltf/DamagedHelmet/glTF/DamagedHelmet.gltf', // Using Helmet as a placeholder for cockpit realism
+        gun: 'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/models/gltf/LeePerrySmith/LeePerrySmith.glb'
     };
 
-    init();
+    window.startGame = (diff) => {
+        document.getElementById('menu').style.display = 'none';
+        document.getElementById('crosshair').style.display = 'block';
+        init(diff);
+    };
 
-    async function init() {
+    async function init(difficulty) {
         scene = new THREE.Scene();
         camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 50000);
-        
+        camera.position.set(0, 25, 100);
+
         renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
         document.body.appendChild(renderer.domElement);
 
         controls = new PointerLockControls(camera, document.body);
-        document.getElementById('startBtn').onclick = () => {
-            controls.lock();
-            document.getElementById('loading').style.display = 'none';
-            initAudio();
-        };
+        controls.lock();
 
-        setupEnvironment();
-        await loadModels();
+        setupWorld();
+        createCarrier();
+        await loadAssets();
         setupInput();
-        connect();
+        connect(difficulty);
         animate();
     }
 
-    function setupEnvironment() {
-        // Sky & Sun
+    function setupWorld() {
         const sky = new Sky(); sky.scale.setScalar(450000); scene.add(sky);
         const sun = new THREE.Vector3();
         sun.setFromSphericalCoords(1, THREE.MathUtils.degToRad(88), THREE.MathUtils.degToRad(180));
         sky.material.uniforms['sunPosition'].value.copy(sun);
 
-        // Water
         const waterGeo = new THREE.PlaneGeometry(50000, 50000);
         water = new Water(waterGeo, {
             textureWidth: 512, textureHeight: 512,
@@ -100,46 +101,43 @@
         water.rotation.x = -Math.PI / 2;
         scene.add(water);
 
-        const light = new THREE.DirectionalLight(0xffffff, 2);
-        light.position.set(100, 100, 100);
-        scene.add(light);
-        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+        scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+        const dLight = new THREE.DirectionalLight(0xffffff, 2);
+        dLight.position.set(100, 100, 100);
+        scene.add(dLight);
     }
 
-    async function loadModels() {
-        // Load Carrier
-        loader.load(ASSETS.carrier, (gltf) => {
-            const ship = gltf.scene;
-            ship.scale.set(60, 60, 60);
-            ship.position.set(0, -2, 0);
-            scene.add(ship);
-            document.getElementById('startBtn').style.display = 'block';
-            document.getElementById('loadStatus').innerText = "SYSTEMS ONLINE";
-        });
+    function createCarrier() {
+        // High-Def Procedural Carrier (Guaranteed to load)
+        const carrier = new THREE.Group();
+        const deckGeo = new THREE.BoxGeometry(100, 5, 400);
+        const deckMat = new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.9, roughness: 0.1 });
+        const deck = new THREE.Mesh(deckGeo, deckMat);
+        deck.position.y = 20;
+        carrier.add(deck);
 
+        const towerGeo = new THREE.BoxGeometry(20, 50, 40);
+        const tower = new THREE.Mesh(towerGeo, new THREE.MeshStandardMaterial({color: 0x555555}));
+        tower.position.set(40, 45, -50);
+        carrier.add(tower);
+
+        scene.add(carrier);
+    }
+
+    async function loadAssets() {
         // Load Jet
-        loader.load(ASSETS.jet, (gltf) => {
-            jetModel = gltf.scene;
-            jetModel.position.set(20, 22, 100);
-            jetModel.scale.set(5, 5, 5);
-            scene.add(jetModel);
+        loader.load(MODELS.jet, (gltf) => {
+            jet = gltf.scene;
+            jet.position.set(-20, 23, 50);
+            jet.scale.set(5, 5, 5);
+            scene.add(jet);
         });
 
-        // Load Gun (First Person)
-        loader.load(ASSETS.gun, (gltf) => {
-            weaponModel = gltf.scene;
-            weaponModel.scale.set(0.2, 0.2, 0.2);
-            camera.add(weaponModel);
-            weaponModel.position.set(0.5, -0.5, -1);
-            weaponModel.rotation.y = Math.PI;
-            scene.add(camera);
-        });
-    }
-
-    function initAudio() {
-        const listener = new THREE.AudioListener();
-        camera.add(listener);
-        // Sound logic would go here
+        // Boat
+        const boatGeo = new THREE.BoxGeometry(10, 5, 25);
+        boat = new THREE.Mesh(boatGeo, new THREE.MeshStandardMaterial({color: 0x005500}));
+        boat.position.set(150, 0, 150);
+        scene.add(boat);
     }
 
     function setupInput() {
@@ -148,7 +146,7 @@
             if(e.code === 'KeyS') moveB = true;
             if(e.code === 'KeyA') moveL = true;
             if(e.code === 'KeyD') moveR = true;
-            if(e.code === 'KeyE') toggleVehicle();
+            if(e.code === 'KeyE') interact();
         });
         document.addEventListener('keyup', (e) => {
             if(e.code === 'KeyW') moveF = false;
@@ -156,42 +154,48 @@
             if(e.code === 'KeyA') moveL = false;
             if(e.code === 'KeyD') moveR = false;
         });
-        document.addEventListener('mousedown', fireWeapon);
+        document.addEventListener('mousedown', fire);
     }
 
-    function toggleVehicle() {
-        const distToJet = camera.position.distanceTo(jetModel.position);
-        if (mode === "walking" && distToJet < 20) {
-            mode = "jet";
-            weaponModel.visible = false;
-            document.getElementById('vehicle').innerText = "STATUS: PILOTING JET";
-        } else if (mode === "jet") {
-            mode = "walking";
-            weaponModel.visible = true;
+    function interact() {
+        if(currentMode === "walking") {
+            if(camera.position.distanceTo(jet.position) < 20) {
+                currentMode = "flying";
+                document.getElementById('mode').innerText = "JET PILOT";
+            } else if(camera.position.distanceTo(boat.position) < 30) {
+                currentMode = "boating";
+                document.getElementById('mode').innerText = "BOAT COMMANDER";
+            }
+        } else {
+            currentMode = "walking";
             camera.position.y += 10;
-            document.getElementById('vehicle').innerText = "STATUS: INFANTRY";
         }
     }
 
-    function fireWeapon() {
-        if(mode === "walking") {
-            weaponModel.position.z += 0.1; // Recoil
-            setTimeout(() => weaponModel.position.z -= 0.1, 50);
-            // Spawn Missile Logic
-            const missile = new THREE.Mesh(new THREE.SphereGeometry(0.1), new THREE.MeshBasicMaterial({color: 0xffff00}));
-            missile.position.copy(camera.position);
-            scene.add(missile);
-            const dir = new THREE.Vector3(); camera.getWorldDirection(dir);
-            const interval = setInterval(() => {
-                missile.position.addScaledVector(dir, 10);
-                if(missile.position.length() > 5000) { scene.remove(missile); clearInterval(interval); }
-            }, 10);
-        }
+    function fire() {
+        // Play Gunshot Sound
+        const audio = new Audio('https://actions.google.com/sounds/v1/weapons/fire_arm_shot.ogg');
+        audio.play();
+
+        const missile = new THREE.Mesh(new THREE.SphereGeometry(1), new THREE.MeshBasicMaterial({color: 0xff0000}));
+        missile.position.copy(camera.position);
+        scene.add(missile);
+        const dir = new THREE.Vector3(); camera.getWorldDirection(dir);
+        
+        let life = 0;
+        const loop = setInterval(() => {
+            missile.position.addScaledVector(dir, 10);
+            life++;
+            if(life > 200) { scene.remove(missile); clearInterval(loop); }
+        }, 16);
     }
 
-    function connect() {
+    function connect(diff) {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
+        socket.onopen = () => {
+            socket.send(JSON.stringify({type: "player", diff: diff}));
+        };
     }
 
     function animate() {
@@ -199,33 +203,34 @@
         const delta = clock.getDelta();
 
         if (controls.isLocked) {
-            if (mode === "walking") {
-                const speed = 40;
+            if (currentMode === "walking") {
+                const speed = moveF || moveB || moveL || moveR ? 40 : 0;
                 if(moveF) controls.moveForward(speed * delta);
                 if(moveB) controls.moveForward(-speed * delta);
                 if(moveL) controls.moveRight(-speed * delta);
                 if(moveR) controls.moveRight(speed * delta);
-
-                // Realistic Gravity & Ship Collision
-                if(camera.position.y > 22) camera.position.y -= 30 * delta;
-                else camera.position.y = 22; // Stay on deck
+                
+                // Parachute/Gravity Logic
+                if(camera.position.y > 23) camera.position.y -= 10 * delta; 
+                else if(Math.abs(camera.position.x) < 50 && Math.abs(camera.position.z) < 200) camera.position.y = 23;
             } 
-            else if (mode === "jet") {
-                const jetSpeed = 200 * delta;
-                jetModel.translateZ(jetSpeed);
-                if(moveL) jetModel.rotation.y += delta;
-                if(moveR) jetModel.rotation.y -= delta;
-                if(moveF) jetModel.position.y += jetSpeed * 0.5;
-                if(moveB) jetModel.position.y -= jetSpeed * 0.5;
-
-                camera.position.copy(jetModel.position).add(new THREE.Vector3(0, 5, -15));
-                camera.lookAt(jetModel.position);
+            else if (currentMode === "flying") {
+                jet.translateZ(200 * delta);
+                if(moveL) jet.rotation.y += delta;
+                if(moveR) jet.rotation.y -= delta;
+                camera.position.copy(jet.position).add(new THREE.Vector3(0, 10, -30));
+                camera.lookAt(jet.position);
+            }
+            else if (currentMode === "boating") {
+                boat.translateZ(50 * delta);
+                if(moveL) boat.rotation.y += delta;
+                if(moveR) boat.rotation.y -= delta;
+                camera.position.copy(boat.position).add(new THREE.Vector3(0, 10, 30));
+                camera.lookAt(boat.position);
             }
         }
 
         water.material.uniforms['time'].value += 1.0 / 60.0;
-        document.getElementById('coords').innerText = `COORDS: ${Math.round(camera.position.x)}, ${Math.round(camera.position.y)}, ${Math.round(camera.position.z)}`;
-        
         renderer.render(scene, camera);
     }
 </script>
