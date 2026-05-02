@@ -2,31 +2,37 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>NAVY WARFARE: ELITE OPS</title>
+    <title>NAVY WARFARE: ULTRA-REAL</title>
     <style>
-        body { margin: 0; background: #000; color: #0f0; font-family: 'Courier New', monospace; overflow: hidden; }
-        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 100; color: white; }
-        #ui { position: absolute; bottom: 30px; left: 30px; pointer-events: none; z-index: 10; font-weight: bold; font-size: 18px; color: #0f0; }
-        #minimap { position: absolute; top: 20px; right: 20px; width: 200px; height: 200px; border: 2px solid #0f0; background: rgba(0,20,0,0.5); z-index: 20; border-radius: 50%; }
-        #crosshair { position: absolute; top: 50%; left: 50%; width: 20px; height: 20px; border: 1px solid #fff; transform: translate(-50%, -50%); border-radius: 50%; pointer-events: none; }
-        canvas { display: block; }
-        button { background: #0f0; color: #000; border: none; padding: 15px 40px; font-weight: bold; cursor: pointer; font-size: 20px; }
+        body { margin: 0; background: #000; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 100; color: white; text-align: center; }
+        #ui { position: absolute; bottom: 30px; left: 30px; pointer-events: none; z-index: 10; color: #0f0; text-shadow: 1px 1px #000; }
+        #minimap-container { position: absolute; top: 20px; right: 20px; width: 220px; height: 220px; border: 3px solid #555; background: rgba(0,10,20,0.8); border-radius: 10px; }
+        #minimap { width: 220px; height: 220px; }
+        #prompt { position: absolute; top: 60%; left: 50%; transform: translate(-50%, -50%); color: yellow; font-size: 24px; font-weight: bold; display: none; }
+        #crosshair { position: absolute; top: 50%; left: 50%; width: 24px; height: 24px; border: 2px solid rgba(0,255,0,0.5); transform: translate(-50%, -50%); border-radius: 50%; }
+        button { background: #d00; color: white; border: none; padding: 20px 50px; font-size: 20px; font-weight: bold; cursor: pointer; border-radius: 5px; }
+        button:hover { background: #f00; }
     </style>
 </head>
 <body>
 
 <div id="overlay">
-    <h1>AIRCRAFT CARRIER READY</h1>
-    <p>WASD to Move | SHIFT to Run | SPACE to Fly Jet | CLICK to Fire</p>
-    <button id="startBtn">BOARD SHIP</button>
+    <h1 style="letter-spacing: 15px;">AIRCRAFT CARRIER OPS</h1>
+    <p style="max-width: 600px;">Walk to a Jet or Boat and press [E] to pilot. Follow the Red Markers on your radar to engage hostiles. Use [WASD] to move, [SHIFT] to sprint.</p>
+    <button id="startBtn">START MISSION</button>
 </div>
 
-<canvas id="minimap"></canvas>
+<div id="prompt">PRESS [E] TO ENTER VEHICLE</div>
+
+<div id="minimap-container">
+    <canvas id="minimap"></canvas>
+</div>
 
 <div id="ui">
-    <div>POS: <span id="posDisplay">0, 0</span></div>
-    <div>ALTITUDE: <span id="altDisplay">0</span></div>
-    <div>ENGINE: <span id="engineDisplay">READY</span></div>
+    <div id="mode">MODE: INFANTRY</div>
+    <div id="alt">ALTITUDE: 0m</div>
+    <div id="speed">SPEED: 0 knots</div>
 </div>
 <div id="crosshair"></div>
 
@@ -41,27 +47,32 @@
 
 <script type="module">
     import * as THREE from 'three';
-    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
     import { Water } from 'three/addons/objects/Water.js';
     import { Sky } from 'three/addons/objects/Sky.js';
 
     let scene, camera, renderer, controls, water, mapCtx;
-    let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false, isFlying = false;
-    let velocity = new THREE.Vector3();
-    let direction = new THREE.Vector3();
+    let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+    let currentMode = "walking"; // walking, flying, boating
+    let playerVelocity = new THREE.Vector3();
+    let jet, boat;
     const clock = new THREE.Clock();
+
+    // Official US Navy Colors
+    const COLOR_HAZE_GRAY = 0x898d8e;
+    const COLOR_DECK_GRAY = 0x4b4f51;
 
     init();
 
     function init() {
         scene = new THREE.Scene();
-        camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 20000);
-        camera.position.set(0, 12, 100); // Start on the deck
+        camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 30000);
+        camera.position.set(0, 15, 100);
 
         renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 0.8;
         document.body.appendChild(renderer.domElement);
 
         controls = new PointerLockControls(camera, document.body);
@@ -70,91 +81,133 @@
             document.getElementById('overlay').style.display = 'none';
         });
 
-        // 1. MINIMAP SETUP
-        const mapCanvas = document.getElementById('minimap');
-        mapCtx = mapCanvas.getContext('2d');
-        mapCanvas.width = 200;
-        mapCanvas.height = 200;
-
-        // 2. THE OCEAN
-        const sun = new THREE.Vector3();
-        const waterGeo = new THREE.PlaneGeometry(10000, 10000);
-        water = new Water(waterGeo, {
-            textureWidth: 512, textureHeight: 512,
-            waterNormals: new THREE.TextureLoader().load('https://threejs.org/examples/textures/waternormals.jpg', (t) => { t.wrapS = t.wrapT = THREE.RepeatWrapping; }),
-            sunDirection: sun, sunColor: 0xffffff, waterColor: 0x001e0f, distortionScale: 3.7,
-        });
-        water.rotation.x = -Math.PI / 2;
-        scene.add(water);
-
-        // 3. THE SKY
-        const sky = new Sky();
-        sky.scale.setScalar(10000);
-        scene.add(sky);
-        sun.setFromSphericalCoords(1, THREE.MathUtils.degToRad(88), THREE.MathUtils.degToRad(180));
-        sky.material.uniforms['sunPosition'].value.copy(sun);
-
-        // 4. THE AIRCRAFT CARRIER (HARDCODED FOR RELIABILITY)
-        // Main Deck
-        const deckGeo = new THREE.BoxGeometry(100, 10, 400);
-        const deckMat = new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.8, roughness: 0.2 });
-        const carrierDeck = new THREE.Mesh(deckGeo, deckMat);
-        carrierDeck.position.set(0, 5, 0); // Bottom of deck at water level
-        scene.add(carrierDeck);
-
-        // Runway Lines
-        const lineGeo = new THREE.PlaneGeometry(2, 400);
-        const lineMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
-        const line = new THREE.Mesh(lineGeo, lineMat);
-        line.rotation.x = -Math.PI/2;
-        line.position.set(0, 10.1, 0);
-        scene.add(line);
-
-        // Tower (Command Center)
-        const towerGeo = new THREE.BoxGeometry(20, 50, 40);
-        const tower = new THREE.Mesh(towerGeo, deckMat);
-        tower.position.set(40, 30, -50);
-        scene.add(tower);
-
-        // Lighting
-        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-        const dLight = new THREE.DirectionalLight(0xffffff, 1.5);
-        dLight.position.set(100, 100, 100);
-        scene.add(dLight);
-
-        // Input
-        document.addEventListener('keydown', (e) => handleKey(e.code, true));
-        document.addEventListener('keyup', (e) => handleKey(e.code, false));
+        setupEnvironment();
+        buildCarrier();
+        spawnVehicles();
+        setupInput();
+        
+        mapCtx = document.getElementById('minimap').getContext('2d');
+        document.getElementById('minimap').width = 220;
+        document.getElementById('minimap').height = 220;
 
         animate();
     }
 
-    function handleKey(code, pressed) {
-        if (code === 'KeyW') moveForward = pressed;
-        if (code === 'KeyS') moveBackward = pressed;
-        if (code === 'KeyA') moveLeft = pressed;
-        if (code === 'KeyD') moveRight = pressed;
-        if (code === 'Space') isFlying = pressed;
+    function setupEnvironment() {
+        // Sky
+        const sky = new Sky();
+        sky.scale.setScalar(20000);
+        scene.add(sky);
+        const sun = new THREE.Vector3();
+        sun.setFromSphericalCoords(1, THREE.MathUtils.degToRad(85), THREE.MathUtils.degToRad(150));
+        sky.material.uniforms['sunPosition'].value.copy(sun);
+
+        // Water
+        const waterGeo = new THREE.PlaneGeometry(20000, 20000);
+        water = new Water(waterGeo, {
+            textureWidth: 512, textureHeight: 512,
+            waterNormals: new THREE.TextureLoader().load('https://threejs.org/examples/textures/waternormals.jpg', (t) => { t.wrapS = t.wrapT = THREE.RepeatWrapping; }),
+            sunDirection: sun, sunColor: 0xffffff, waterColor: 0x001e0f, distortionScale: 4.0,
+        });
+        water.rotation.x = -Math.PI / 2;
+        scene.add(water);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+        const dLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        dLight.position.set(100, 100, 50);
+        scene.add(dLight);
     }
 
-    function updateMinimap() {
-        mapCtx.clearRect(0, 0, 200, 200);
-        mapCtx.strokeStyle = "#0f0";
-        mapCtx.beginPath();
-        mapCtx.arc(100, 100, 95, 0, Math.PI * 2);
-        mapCtx.stroke();
+    function buildCarrier() {
+        const carrier = new THREE.Group();
 
-        // Draw Carrier on Map
-        mapCtx.fillStyle = "rgba(0, 255, 0, 0.3)";
-        mapCtx.fillRect(90, 60, 20, 80);
+        // 1. MAIN HULL (The giant gray base)
+        const hullGeo = new THREE.BoxGeometry(80, 25, 330);
+        const hullMat = new THREE.MeshStandardMaterial({ color: COLOR_HAZE_GRAY });
+        const hull = new THREE.Mesh(hullGeo, hullMat);
+        hull.position.y = 7.5;
+        carrier.add(hull);
 
-        // Draw Player on Map
-        const mapX = 100 + (camera.position.x / 10);
-        const mapZ = 100 + (camera.position.z / 10);
-        mapCtx.fillStyle = "white";
-        mapCtx.beginPath();
-        mapCtx.arc(mapX, mapZ, 3, 0, Math.PI * 2);
-        mapCtx.fill();
+        // 2. FLIGHT DECK (The top flat part)
+        const deckGeo = new THREE.BoxGeometry(110, 2, 335);
+        const deckMat = new THREE.MeshStandardMaterial({ color: COLOR_DECK_GRAY });
+        const deck = new THREE.Mesh(deckGeo, deckMat);
+        deck.position.y = 20;
+        carrier.add(deck);
+
+        // 3. HANGAR INTERIOR (An actual entrance)
+        const hangarGeo = new THREE.BoxGeometry(70, 10, 100);
+        const hangarMat = new THREE.MeshStandardMaterial({ color: 0x333333, side: THREE.DoubleSide });
+        const hangar = new THREE.Mesh(hangarGeo, hangarMat);
+        hangar.position.set(0, 12, 0);
+        carrier.add(hangar);
+
+        // Entrance Ramp to Hangar
+        const rampGeo = new THREE.BoxGeometry(20, 1, 40);
+        const ramp = new THREE.Mesh(rampGeo, hullMat);
+        ramp.rotation.x = 0.4;
+        ramp.position.set(40, 15, 60);
+        carrier.add(ramp);
+
+        // 4. COMMAND TOWER (The "Island")
+        const towerGeo = new THREE.BoxGeometry(15, 30, 40);
+        const tower = new THREE.Mesh(towerGeo, hullMat);
+        tower.position.set(35, 35, -20);
+        carrier.add(tower);
+
+        scene.add(carrier);
+    }
+
+    function spawnVehicles() {
+        // Jet on Deck
+        const jetGeo = new THREE.ConeGeometry(2, 8, 4);
+        const jetMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+        jet = new THREE.Mesh(jetGeo, jetMat);
+        jet.rotation.x = Math.PI / 2;
+        jet.position.set(-20, 22, 50);
+        scene.add(jet);
+
+        // Boat in Water
+        const boatGeo = new THREE.BoxGeometry(5, 2, 12);
+        const boatMat = new THREE.MeshStandardMaterial({ color: 0x555555 });
+        boat = new THREE.Mesh(boatGeo, boatMat);
+        boat.position.set(100, 1, 100);
+        scene.add(boat);
+    }
+
+    function setupInput() {
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'KeyW') moveForward = true;
+            if (e.code === 'KeyS') moveBackward = true;
+            if (e.code === 'KeyA') moveLeft = true;
+            if (e.code === 'KeyD') moveRight = true;
+            
+            // Interaction
+            if (e.code === 'KeyE') {
+                const distToJet = camera.position.distanceTo(jet.position);
+                const distToBoat = camera.position.distanceTo(boat.position);
+
+                if (currentMode === "walking") {
+                    if (distToJet < 15) {
+                        currentMode = "flying";
+                        document.getElementById('mode').innerText = "MODE: F/A-18 JET";
+                    } else if (distToBoat < 15) {
+                        currentMode = "boating";
+                        document.getElementById('mode').innerText = "MODE: PATROL BOAT";
+                    }
+                } else {
+                    currentMode = "walking";
+                    camera.position.y += 5; // Hop out
+                    document.getElementById('mode').innerText = "MODE: INFANTRY";
+                }
+            }
+        });
+        document.addEventListener('keyup', (e) => {
+            if (e.code === 'KeyW') moveForward = false;
+            if (e.code === 'KeyS') moveBackward = false;
+            if (e.code === 'KeyA') moveLeft = false;
+            if (e.code === 'KeyD') moveRight = false;
+        });
     }
 
     function animate() {
@@ -162,43 +215,77 @@
         const delta = clock.getDelta();
 
         if (controls.isLocked) {
-            velocity.x -= velocity.x * 10.0 * delta;
-            velocity.z -= velocity.z * 10.0 * delta;
+            if (currentMode === "walking") {
+                // WALKING PHYSICS
+                playerVelocity.x -= playerVelocity.x * 10.0 * delta;
+                playerVelocity.z -= playerVelocity.z * 10.0 * delta;
+                if (moveForward) playerVelocity.z -= 400.0 * delta;
+                if (moveBackward) playerVelocity.z += 400.0 * delta;
+                if (moveLeft) playerVelocity.x -= 400.0 * delta;
+                if (moveRight) playerVelocity.x += 400.0 * delta;
 
-            direction.z = Number(moveForward) - Number(moveBackward);
-            direction.x = Number(moveRight) - Number(moveLeft);
-            direction.normalize();
+                controls.moveRight(-playerVelocity.x * delta);
+                controls.moveForward(-playerVelocity.z * delta);
 
-            if (moveForward || moveBackward) velocity.z -= direction.z * 400.0 * delta;
-            if (moveLeft || moveRight) velocity.x -= direction.x * 400.0 * delta;
-
-            controls.moveRight(-velocity.x * delta);
-            controls.moveForward(-velocity.z * delta);
-
-            // Flight Logic
-            if (isFlying) {
-                camera.position.y += 100 * delta;
-                document.getElementById('engineDisplay').innerText = "THRUST ACTIVE";
-            } else {
-                // Gravity: Stay on Deck (Deck height is 10)
-                if (camera.position.y > 12) {
-                    camera.position.y -= 50 * delta; // Fall speed
+                // Ground Collision (stay on deck or hangar)
+                let onDeck = (Math.abs(camera.position.x) < 55 && Math.abs(camera.position.z) < 165);
+                if (onDeck) {
+                    if (camera.position.y > 22) camera.position.y = 22; // Deck
+                    else if (camera.position.y < 12) camera.position.y = 12; // Hangar
                 } else {
-                    camera.position.y = 12; // Snap to deck
-                    document.getElementById('engineDisplay').innerText = "ON DECK";
+                    if (camera.position.y > 2) camera.position.y -= 20 * delta; // Fall to water
                 }
+            } 
+            else if (currentMode === "flying") {
+                // JET PHYSICS
+                const speed = 150;
+                if (moveForward) jet.translateY(speed * delta);
+                if (moveLeft) jet.rotation.z += delta;
+                if (moveRight) jet.rotation.z -= delta;
+                
+                // Camera follows Jet
+                camera.position.copy(jet.position).add(new THREE.Vector3(0, 10, 30));
+                camera.lookAt(jet.position);
+                document.getElementById('alt').innerText = `ALTITUDE: ${Math.round(jet.position.y)}m`;
+                document.getElementById('speed').innerText = `SPEED: ${speed} knots`;
             }
+            else if (currentMode === "boating") {
+                // BOAT PHYSICS
+                if (moveForward) boat.translateZ(-30 * delta);
+                if (moveLeft) boat.rotation.y += delta;
+                if (moveRight) boat.rotation.y -= delta;
+                camera.position.copy(boat.position).add(new THREE.Vector3(0, 5, 15));
+                camera.lookAt(boat.position);
+            }
+
+            // Show prompt if near vehicle
+            const nearJet = camera.position.distanceTo(jet.position) < 15;
+            document.getElementById('prompt').style.display = (nearJet && currentMode === "walking") ? 'block' : 'none';
         }
 
-        // Ocean animation
         water.material.uniforms['time'].value += 1.0 / 60.0;
-
-        // UI Updates
-        document.getElementById('posDisplay').innerText = `${Math.round(camera.position.x)}, ${Math.round(camera.position.z)}`;
-        document.getElementById('altDisplay').innerText = Math.round(camera.position.y - 12);
-        
         updateMinimap();
         renderer.render(scene, camera);
+    }
+
+    function updateMinimap() {
+        mapCtx.fillStyle = "#001";
+        mapCtx.fillRect(0,0,220,220);
+        
+        // Carrier Outline
+        mapCtx.strokeStyle = "#555";
+        mapCtx.strokeRect(110-20, 110-80, 40, 160);
+        
+        // Objectives (Red Dots)
+        mapCtx.fillStyle = "red";
+        mapCtx.beginPath(); mapCtx.arc(50, 50, 5, 0, 7); mapCtx.fill();
+        mapCtx.beginPath(); mapCtx.arc(180, 30, 5, 0, 7); mapCtx.fill();
+
+        // Player (Green Dot)
+        const px = 110 + (camera.position.x / 5);
+        const pz = 110 + (camera.position.z / 5);
+        mapCtx.fillStyle = "#0f0";
+        mapCtx.beginPath(); mapCtx.arc(px, pz, 4, 0, 7); mapCtx.fill();
     }
 </script>
 </body>
