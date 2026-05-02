@@ -4,29 +4,29 @@
     <meta charset="UTF-8">
     <title>NAVY WARFARE: ELITE OPS</title>
     <style>
-        body { margin: 0; background: #000; color: #0f0; font-family: 'Arial', sans-serif; overflow: hidden; }
-        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: radial-gradient(circle, rgba(0,0,0,0) 0%, rgba(0,0,0,0.8) 100%); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
-        #ui { position: absolute; bottom: 30px; left: 30px; pointer-events: none; text-shadow: 2px 2px #000; }
-        #crosshair { position: absolute; top: 50%; left: 50%; width: 20px; height: 20px; border: 2px solid rgba(255,255,255,0.5); transform: translate(-50%, -50%); border-radius: 50%; }
-        #crosshair::before { content: ''; position: absolute; top: 50%; left: -5px; width: 30px; height: 2px; background: rgba(255,255,255,0.5); }
-        #crosshair::after { content: ''; position: absolute; left: 50%; top: -5px; width: 2px; height: 30px; background: rgba(255,255,255,0.5); }
-        h1 { font-size: 3em; letter-spacing: 10px; color: #fff; margin-bottom: 0; }
-        button { background: #fff; color: #000; border: none; padding: 15px 40px; font-weight: bold; cursor: pointer; margin-top: 20px; }
-        button:hover { background: #0f0; }
+        body { margin: 0; background: #000; color: #0f0; font-family: 'Courier New', monospace; overflow: hidden; }
+        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 100; color: white; }
+        #ui { position: absolute; bottom: 30px; left: 30px; pointer-events: none; z-index: 10; font-weight: bold; font-size: 18px; color: #0f0; }
+        #minimap { position: absolute; top: 20px; right: 20px; width: 200px; height: 200px; border: 2px solid #0f0; background: rgba(0,20,0,0.5); z-index: 20; border-radius: 50%; }
+        #crosshair { position: absolute; top: 50%; left: 50%; width: 20px; height: 20px; border: 1px solid #fff; transform: translate(-50%, -50%); border-radius: 50%; pointer-events: none; }
+        canvas { display: block; }
+        button { background: #0f0; color: #000; border: none; padding: 15px 40px; font-weight: bold; cursor: pointer; font-size: 20px; }
     </style>
 </head>
 <body>
 
 <div id="overlay">
-    <h1>NAVY OPS</h1>
-    <p>AIRCRAFT CARRIER MULTIPLAYER</p>
-    <button id="startBtn">JOIN BATTLE</button>
+    <h1>AIRCRAFT CARRIER READY</h1>
+    <p>WASD to Move | SHIFT to Run | SPACE to Fly Jet | CLICK to Fire</p>
+    <button id="startBtn">BOARD SHIP</button>
 </div>
 
+<canvas id="minimap"></canvas>
+
 <div id="ui">
-    <div style="font-size: 24px;">HP: <span id="hp">100</span>%</div>
-    <div id="status">STATUS: READY TO DEPLOY</div>
-    <div id="count">PLAYERS: 1</div>
+    <div>POS: <span id="posDisplay">0, 0</span></div>
+    <div>ALTITUDE: <span id="altDisplay">0</span></div>
+    <div>ENGINE: <span id="engineDisplay">READY</span></div>
 </div>
 <div id="crosshair"></div>
 
@@ -46,29 +46,22 @@
     import { Water } from 'three/addons/objects/Water.js';
     import { Sky } from 'three/addons/objects/Sky.js';
 
-    let scene, camera, renderer, controls, water, socket;
-    let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
-    let isFlying = false, canShoot = true;
-    const loader = new GLTFLoader();
+    let scene, camera, renderer, controls, water, mapCtx;
+    let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false, isFlying = false;
+    let velocity = new THREE.Vector3();
+    let direction = new THREE.Vector3();
     const clock = new THREE.Clock();
-
-    // High Fidelity Assets
-    const models = {
-        carrier: 'https://vazxmixjsiawhamofees.supabase.co/storage/v1/object/public/models/ship-large/model.gltf',
-        jet: 'https://vazxmixjsiawhamofees.supabase.co/storage/v1/object/public/models/low-poly-spaceship/model.gltf'
-    };
 
     init();
 
     function init() {
         scene = new THREE.Scene();
         camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 20000);
-        camera.position.set(0, 15, 50);
+        camera.position.set(0, 12, 100); // Start on the deck
 
         renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 0.5;
         document.body.appendChild(renderer.domElement);
 
         controls = new PointerLockControls(camera, document.body);
@@ -77,91 +70,91 @@
             document.getElementById('overlay').style.display = 'none';
         });
 
-        // 1. COD-STYLE ATMOSPHERE
-        const sky = new Sky();
-        sky.scale.setScalar(10000);
-        scene.add(sky);
-        const sun = new THREE.Vector3();
-        sun.setFromSphericalCoords(1, THREE.MathUtils.degToRad(88), THREE.MathUtils.degToRad(180));
-        sky.material.uniforms['sunPosition'].value.copy(sun);
+        // 1. MINIMAP SETUP
+        const mapCanvas = document.getElementById('minimap');
+        mapCtx = mapCanvas.getContext('2d');
+        mapCanvas.width = 200;
+        mapCanvas.height = 200;
 
-        // 2. REALISTIC WATER
+        // 2. THE OCEAN
+        const sun = new THREE.Vector3();
         const waterGeo = new THREE.PlaneGeometry(10000, 10000);
         water = new Water(waterGeo, {
             textureWidth: 512, textureHeight: 512,
             waterNormals: new THREE.TextureLoader().load('https://threejs.org/examples/textures/waternormals.jpg', (t) => { t.wrapS = t.wrapT = THREE.RepeatWrapping; }),
-            sunDirection: sun, sunColor: 0xffffff, waterColor: 0x001e0f, distortionScale: 4.0,
+            sunDirection: sun, sunColor: 0xffffff, waterColor: 0x001e0f, distortionScale: 3.7,
         });
         water.rotation.x = -Math.PI / 2;
         scene.add(water);
 
-        // 3. THE SHIP
-        loader.load(models.carrier, (gltf) => {
-            const ship = gltf.scene;
-            ship.scale.set(50, 50, 50);
-            ship.position.y = -5;
-            scene.add(ship);
-        });
+        // 3. THE SKY
+        const sky = new Sky();
+        sky.scale.setScalar(10000);
+        scene.add(sky);
+        sun.setFromSphericalCoords(1, THREE.MathUtils.degToRad(88), THREE.MathUtils.degToRad(180));
+        sky.material.uniforms['sunPosition'].value.copy(sun);
+
+        // 4. THE AIRCRAFT CARRIER (HARDCODED FOR RELIABILITY)
+        // Main Deck
+        const deckGeo = new THREE.BoxGeometry(100, 10, 400);
+        const deckMat = new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.8, roughness: 0.2 });
+        const carrierDeck = new THREE.Mesh(deckGeo, deckMat);
+        carrierDeck.position.set(0, 5, 0); // Bottom of deck at water level
+        scene.add(carrierDeck);
+
+        // Runway Lines
+        const lineGeo = new THREE.PlaneGeometry(2, 400);
+        const lineMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+        const line = new THREE.Mesh(lineGeo, lineMat);
+        line.rotation.x = -Math.PI/2;
+        line.position.set(0, 10.1, 0);
+        scene.add(line);
+
+        // Tower (Command Center)
+        const towerGeo = new THREE.BoxGeometry(20, 50, 40);
+        const tower = new THREE.Mesh(towerGeo, deckMat);
+        tower.position.set(40, 30, -50);
+        scene.add(tower);
 
         // Lighting
-        scene.add(new THREE.AmbientLight(0x404040, 2));
-        const dLight = new THREE.DirectionalLight(0xffffff, 3);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+        const dLight = new THREE.DirectionalLight(0xffffff, 1.5);
         dLight.position.set(100, 100, 100);
         scene.add(dLight);
 
-        window.addEventListener('keydown', (e) => toggleMove(e.code, true));
-        window.addEventListener('keyup', (e) => toggleMove(e.code, false));
-        window.addEventListener('mousedown', shoot);
+        // Input
+        document.addEventListener('keydown', (e) => handleKey(e.code, true));
+        document.addEventListener('keyup', (e) => handleKey(e.code, false));
 
-        connect();
         animate();
     }
 
-    function toggleMove(code, state) {
-        if (code === 'KeyW') moveForward = state;
-        if (code === 'KeyS') moveBackward = state;
-        if (code === 'KeyA') moveLeft = state;
-        if (code === 'KeyD') moveRight = state;
-        if (code === 'ShiftLeft' && state) isFlying = !isFlying;
+    function handleKey(code, pressed) {
+        if (code === 'KeyW') moveForward = pressed;
+        if (code === 'KeyS') moveBackward = pressed;
+        if (code === 'KeyA') moveLeft = pressed;
+        if (code === 'KeyD') moveRight = pressed;
+        if (code === 'Space') isFlying = pressed;
     }
 
-    function shoot() {
-        if (!canShoot) return;
-        canShoot = false;
-        
-        // Recoil effect
-        camera.rotation.x += 0.05;
+    function updateMinimap() {
+        mapCtx.clearRect(0, 0, 200, 200);
+        mapCtx.strokeStyle = "#0f0";
+        mapCtx.beginPath();
+        mapCtx.arc(100, 100, 95, 0, Math.PI * 2);
+        mapCtx.stroke();
 
-        const missile = new THREE.Mesh(
-            new THREE.SphereGeometry(0.5),
-            new THREE.MeshBasicMaterial({ color: 0xffaa00 })
-        );
-        missile.position.copy(camera.position);
-        scene.add(missile);
+        // Draw Carrier on Map
+        mapCtx.fillStyle = "rgba(0, 255, 0, 0.3)";
+        mapCtx.fillRect(90, 60, 20, 80);
 
-        const dir = new THREE.Vector3();
-        camera.getWorldDirection(dir);
-        
-        let dist = 0;
-        const interval = setInterval(() => {
-            missile.position.addScaledVector(dir, 5);
-            dist++;
-            if (dist > 100) {
-                scene.remove(missile);
-                clearInterval(interval);
-            }
-        }, 20);
-
-        setTimeout(() => { canShoot = true; }, 200); // Fire rate
-    }
-
-    function connect() {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
-        socket.onmessage = (e) => {
-            const data = JSON.parse(e.data);
-            document.getElementById('count').innerText = `PLAYERS: ${Object.keys(data).length}`;
-        };
+        // Draw Player on Map
+        const mapX = 100 + (camera.position.x / 10);
+        const mapZ = 100 + (camera.position.z / 10);
+        mapCtx.fillStyle = "white";
+        mapCtx.beginPath();
+        mapCtx.arc(mapX, mapZ, 3, 0, Math.PI * 2);
+        mapCtx.fill();
     }
 
     function animate() {
@@ -169,26 +162,42 @@
         const delta = clock.getDelta();
 
         if (controls.isLocked) {
-            const speed = isFlying ? 200 : 30;
-            if (moveForward) controls.moveForward(speed * delta);
-            if (moveBackward) controls.moveForward(-speed * delta);
-            if (moveLeft) controls.moveRight(-speed * delta);
-            if (moveRight) controls.moveRight(speed * delta);
-            
-            // Jet Flying Altitude
-            if (isFlying && camera.position.y < 500) camera.position.y += 0.5;
-            if (!isFlying && camera.position.y > 15) camera.position.y -= 1; // Parachute down
+            velocity.x -= velocity.x * 10.0 * delta;
+            velocity.z -= velocity.z * 10.0 * delta;
+
+            direction.z = Number(moveForward) - Number(moveBackward);
+            direction.x = Number(moveRight) - Number(moveLeft);
+            direction.normalize();
+
+            if (moveForward || moveBackward) velocity.z -= direction.z * 400.0 * delta;
+            if (moveLeft || moveRight) velocity.x -= direction.x * 400.0 * delta;
+
+            controls.moveRight(-velocity.x * delta);
+            controls.moveForward(-velocity.z * delta);
+
+            // Flight Logic
+            if (isFlying) {
+                camera.position.y += 100 * delta;
+                document.getElementById('engineDisplay').innerText = "THRUST ACTIVE";
+            } else {
+                // Gravity: Stay on Deck (Deck height is 10)
+                if (camera.position.y > 12) {
+                    camera.position.y -= 50 * delta; // Fall speed
+                } else {
+                    camera.position.y = 12; // Snap to deck
+                    document.getElementById('engineDisplay').innerText = "ON DECK";
+                }
+            }
         }
 
+        // Ocean animation
         water.material.uniforms['time'].value += 1.0 / 60.0;
 
-        if (socket && socket.readyState === 1) {
-            socket.send(JSON.stringify({
-                x: camera.position.x, y: camera.position.y, z: camera.position.z,
-                rx: camera.rotation.x, ry: camera.rotation.y, rz: camera.rotation.z
-            }));
-        }
-
+        // UI Updates
+        document.getElementById('posDisplay').innerText = `${Math.round(camera.position.x)}, ${Math.round(camera.position.z)}`;
+        document.getElementById('altDisplay').innerText = Math.round(camera.position.y - 12);
+        
+        updateMinimap();
         renderer.render(scene, camera);
     }
 </script>
