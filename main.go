@@ -14,19 +14,18 @@ import (
 
 var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 
-type GameState struct {
+type Entity struct {
 	ID   string  `json:"id"`
-	Type string  `json:"type"` // "player", "missile", "jet"
-	X    float64 `json:"x"`
-	Y    float64 `json:"y"`
-	Z    float64 `json:"z"`
-	RotY float64 `json:"ry"`
+	Type string  `json:"type"` // player, bot, missile
+	X, Y, Z float64 `json:"x"`
+	Ry   float64 `json:"ry"`
+	Diff string  `json:"diff"` // recruit, hardened, veteran
 }
 
 var (
-	players   = make(map[string]*GameState)
-	playersMu sync.Mutex
-	clients   = make(map[*websocket.Conn]string)
+	entities = make(map[string]*Entity)
+	mu       sync.Mutex
+	clients  = make(map[*websocket.Conn]string)
 )
 
 func main() {
@@ -38,32 +37,49 @@ func main() {
 	})
 	http.HandleFunc("/ws", handleConnections)
 
-	log.Println("Battlefield Server Online on port", port)
+	// Bot AI Loop
+	go func() {
+		for {
+			mu.Lock()
+			for id, ent := range entities {
+				if ent.Type == "bot" {
+					speed := 0.05
+					if ent.Diff == "Veteran" { speed = 0.2 }
+					ent.Z += speed // Bots move forward
+					if ent.Z > 200 { ent.Z = -200 }
+				}
+			}
+			mu.Unlock()
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+
+	log.Println("Navy Ops Server on port", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 
 func handleConnections(w http.ResponseWriter, r *http.Request) {
 	ws, _ := upgrader.Upgrade(w, r, nil)
 	defer ws.Close()
-	id := fmt.Sprintf("u_%d", time.Now().UnixNano())
+	id := fmt.Sprintf("u%d", time.Now().UnixNano())
 	clients[ws] = id
 
 	for {
-		var msg GameState
+		var msg Entity
 		err := ws.ReadJSON(&msg)
 		if err != nil {
-			playersMu.Lock()
-			delete(players, id)
-			playersMu.Unlock()
+			mu.Lock()
+			delete(entities, id)
+			mu.Unlock()
 			break
 		}
 		msg.ID = id
-		playersMu.Lock()
-		players[id] = &msg
-		data, _ := json.Marshal(players)
-		for conn := range clients {
-			conn.WriteMessage(websocket.TextMessage, data)
+		mu.Lock()
+		entities[id] = &msg
+		payload, _ := json.Marshal(entities)
+		for c := range clients {
+			c.WriteMessage(websocket.TextMessage, payload)
 		}
-		playersMu.Unlock()
+		mu.Unlock()
 	}
 }
