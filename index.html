@@ -1,217 +1,39 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <title>NAVY WARFARE: GLOBAL OPS</title>
+    <meta charset="utf-8">
+    <title>USS Enterprise Simulator - WASM</title>
     <style>
-        body { margin: 0; background: #000; color: #fff; font-family: 'Arial Black', sans-serif; overflow: hidden; }
-        #overlay { position: absolute; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 100; text-align: center; }
-        #ui { position: absolute; bottom: 20px; left: 20px; z-index: 10; color: #0f0; text-shadow: 2px 2px #000; pointer-events: none; }
-        #radar { position: absolute; top: 20px; right: 20px; width: 180px; height: 180px; border: 2px solid #333; background: rgba(0,20,0,0.6); border-radius: 50%; }
-        #crosshair { position: absolute; top: 50%; left: 50%; width: 24px; height: 24px; border: 1px solid #fff; transform: translate(-50%, -50%); border-radius: 50%; pointer-events: none; }
-        button { background: #d00; border: none; color: #fff; padding: 20px 50px; cursor: pointer; font-size: 24px; font-weight: bold; border-radius: 5px; }
-        button:hover { background: #f00; transform: scale(1.05); }
+        body { margin: 0; overflow: hidden; background: #001020; font-family: monospace; color: white; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        #ui { position: absolute; top: 10px; left: 10px; pointer-events: none; }
+        #minimap { position: absolute; bottom: 20px; right: 20px; width: 200px; height: 200px; border: 2px solid #555; background: rgba(0,0,0,0.5); }
+        .stats { font-size: 12px; color: #0f0; }
     </style>
 </head>
 <body>
-
-<div id="overlay">
-    <h1 style="font-size: 4em; margin-bottom: 0.2em;">NAVY OPS</h1>
-    <p style="font-size: 1.2em; max-width: 700px;">BATTLEFIELD SIMULATION: AIRCRAFT CARRIER STRIKE GROUP</p>
-    <div style="margin: 20px;">
-        <button onclick="startMission('Recruit')">START AS RECRUIT</button>
-        <button onclick="startMission('Veteran')" style="background: #555;">START AS VETERAN</button>
+    <div id="ui">
+        <h1>USS ENTERPRISE (CVN-65)</h1>
+        <div class="stats" id="status">Mode: DECK WALK | Press 'F' to Enter F-18</div>
+        <div class="stats" id="coords">Pos: 0, 0, 0</div>
     </div>
-    <p style="color: #888;">WASD to Move | SHIFT to Sprint | SPACE to Jet/Parachute | CLICK to Fire</p>
-</div>
+    <canvas id="gameCanvas"></canvas>
+    <div id="minimap"></div>
 
-<canvas id="radar"></canvas>
-<div id="crosshair"></div>
-<div id="ui">
-    <div id="mode">STRIKE TEAM: INFANTRY</div>
-    <div id="stats">ALT: 0m | SPD: 0kts</div>
-    <div id="msg" style="color: yellow;">MISSION: SECURE THE DECK</div>
-</div>
-
-<script type="importmap">
-    {
-        "imports": {
-            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-        }
-    }
-</script>
-
-<script type="module">
-    import * as THREE from 'three';
-    import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
-    import { Water } from 'three/addons/objects/Water.js';
-    import { Sky } from 'three/addons/objects/Sky.js';
-
-    let scene, camera, renderer, controls, water, radarCtx;
-    let moveF = false, moveB = false, moveL = false, moveR = false;
-    let isFlying = false, socket;
-    const clock = new THREE.Clock();
-
-    window.startMission = (diff) => {
-        document.getElementById('overlay').style.display = 'none';
-        init(diff);
-    };
-
-    function init(diff) {
-        scene = new THREE.Scene();
-        camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 50000);
-        camera.position.set(0, 25, 100);
-
-        renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        document.body.appendChild(renderer.domElement);
-
-        controls = new PointerLockControls(camera, document.body);
-        controls.lock();
-
-        radarCtx = document.getElementById('radar').getContext('2d');
-        document.getElementById('radar').width = 180;
-        document.getElementById('radar').height = 180;
-
-        setupEnvironment();
-        buildMegaCarrier();
-        setupInput();
-        connect(diff);
-        animate();
-    }
-
-    function setupEnvironment() {
-        const sky = new Sky(); sky.scale.setScalar(450000); scene.add(sky);
-        const sun = new THREE.Vector3();
-        sun.setFromSphericalCoords(1, THREE.MathUtils.degToRad(88), THREE.MathUtils.degToRad(180));
-        sky.material.uniforms['sunPosition'].value.copy(sun);
-
-        const waterGeo = new THREE.PlaneGeometry(50000, 50000);
-        water = new Water(waterGeo, {
-            textureWidth: 512, textureHeight: 512,
-            waterNormals: new THREE.TextureLoader().load('https://threejs.org/examples/textures/waternormals.jpg', t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; }),
-            sunDirection: sun, sunColor: 0xffffff, waterColor: 0x001e0f, distortionScale: 4.0,
-        });
-        water.rotation.x = -Math.PI / 2;
-        scene.add(water);
-
-        scene.add(new THREE.AmbientLight(0xffffff, 0.4));
-        const dl = new THREE.DirectionalLight(0xffffff, 1.5);
-        dl.position.set(100, 100, 50);
-        scene.add(dl);
-    }
-
-    function buildMegaCarrier() {
-        const carrier = new THREE.Group();
-        const hazeGray = 0x898d8e;
-        const deckGray = 0x333333;
-
-        // 1. Hull
-        const hull = new THREE.Mesh(new THREE.BoxGeometry(80, 25, 330), new THREE.MeshStandardMaterial({color: hazeGray}));
-        hull.position.y = 10;
-        carrier.add(hull);
-
-        // 2. Flight Deck
-        const deck = new THREE.Mesh(new THREE.BoxGeometry(110, 2, 335), new THREE.MeshStandardMaterial({color: deckGray, metalness: 0.5}));
-        deck.position.y = 22;
-        carrier.add(deck);
-
-        // 3. Command Tower (Island)
-        const tower = new THREE.Mesh(new THREE.BoxGeometry(15, 40, 40), new THREE.MeshStandardMaterial({color: hazeGray}));
-        tower.position.set(35, 42, -30);
-        carrier.add(tower);
-
-        // 4. Runway Stripes
-        const strip = new THREE.Mesh(new THREE.PlaneGeometry(2, 330), new THREE.MeshBasicMaterial({color: 0xffff00}));
-        strip.rotation.x = -Math.PI/2;
-        strip.position.set(-10, 22.1, 0);
-        carrier.add(strip);
-
-        scene.add(carrier);
-    }
-
-    function setupInput() {
-        document.addEventListener('keydown', e => {
-            if(e.code === 'KeyW') moveF = true;
-            if(e.code === 'KeyS') moveB = true;
-            if(e.code === 'KeyA') moveL = true;
-            if(e.code === 'KeyD') moveR = true;
-            if(e.code === 'Space') isFlying = true;
-        });
-        document.addEventListener('keyup', e => {
-            if(e.code === 'KeyW') moveF = false;
-            if(e.code === 'KeyS') moveB = false;
-            if(e.code === 'KeyA') moveL = false;
-            if(e.code === 'KeyD') moveR = false;
-            if(e.code === 'Space') isFlying = false;
-        });
-        document.addEventListener('mousedown', () => {
-            const missile = new THREE.Mesh(new THREE.SphereGeometry(0.5), new THREE.MeshBasicMaterial({color: 0xffaa00}));
-            missile.position.copy(camera.position);
-            scene.add(missile);
-            const dir = new THREE.Vector3(); camera.getWorldDirection(dir);
-            let time = 0;
-            const loop = setInterval(() => {
-                missile.position.addScaledVector(dir, 10);
-                if(++time > 200) { scene.remove(missile); clearInterval(loop); }
-            }, 16);
-        });
-    }
-
-    function connect(diff) {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
-    }
-
-    function animate() {
-        requestAnimationFrame(animate);
-        const delta = clock.getDelta();
-
-        if (controls.isLocked) {
-            const speed = isFlying ? 200 : 40;
-            if(moveF) controls.moveForward(speed * delta);
-            if(moveB) controls.moveForward(-speed * delta);
-            if(moveL) controls.moveRight(-speed * delta);
-            if(moveR) controls.moveRight(speed * delta);
-
-            // Flight / Parachute / Deck Physics
-            if(isFlying) {
-                camera.position.y += 100 * delta;
-                document.getElementById('mode').innerText = "STRIKE TEAM: JET MODE";
-            } else {
-                // Gravity
-                if(camera.position.y > 24) {
-                    camera.position.y -= 15 * delta; // Parachute speed
-                    document.getElementById('mode').innerText = "STRIKE TEAM: PARACHUTING";
-                } else if(Math.abs(camera.position.x) < 55 && Math.abs(camera.position.z) < 165) {
-                    camera.position.y = 24; // Stay on deck
-                    document.getElementById('mode').innerText = "STRIKE TEAM: INFANTRY";
-                }
-            }
+    <!-- Load the Go WASM bridge -->
+    <script src="https://raw.githubusercontent.com/golang/go/master/misc/wasm/wasm_exec.js"></script>
+    <script>
+        if (!WebAssembly.instantiateStreaming) {
+            WebAssembly.instantiateStreaming = async (resp, importObject) => {
+                const source = await (await resp).arrayBuffer();
+                return await WebAssembly.instantiate(source, importObject);
+            };
         }
 
-        water.material.uniforms['time'].value += delta;
-        updateRadar();
-        document.getElementById('stats').innerText = `ALT: ${Math.round(camera.position.y)}m | SPD: ${isFlying ? '450kts' : '12kts'}`;
-        renderer.render(scene, camera);
-        
-        if(socket && socket.readyState === 1) {
-            socket.send(JSON.stringify({x: camera.position.x, y: camera.position.y, z: camera.position.z}));
-        }
-    }
-
-    function updateRadar() {
-        radarCtx.fillStyle = "rgba(0,40,0,0.8)";
-        radarCtx.fillRect(0,0,180,180);
-        radarCtx.strokeStyle = "#0f0";
-        radarCtx.strokeRect(90-10, 90-40, 20, 80); // The Carrier
-        radarCtx.fillStyle = "white";
-        radarCtx.beginPath();
-        radarCtx.arc(90 + (camera.position.x/10), 90 + (camera.position.z/10), 3, 0, 7);
-        radarCtx.fill();
-    }
-</script>
+        const go = new Go();
+        WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject).then((result) => {
+            go.run(result.instance);
+        });
+    </script>
 </body>
 </html>
